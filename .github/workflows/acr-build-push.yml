@@ -1,0 +1,64 @@
+name: Build and Push Container to ACR
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # Required for OIDC / federated credential login
+  contents: read
+
+env:
+  AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  ACR_NAME: ${{ vars.ACR_NAME }}          # e.g. acrzavastoredeve12345
+  IMAGE_NAME: zavastore
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-and-push:
+    name: ACR Cloud Build (no local Docker)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      # Cloud build: the source is uploaded to ACR and built there — no local Docker needed
+      - name: Build and push image via az acr build
+        run: |
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "$IMAGE_NAME:$IMAGE_TAG" \
+            --image "$IMAGE_NAME:latest" \
+            --file src/Dockerfile \
+            src/
+
+      - name: Update App Service container image
+        run: |
+          WEBAPP_NAME=$(az webapp list \
+            --query "[?contains(name,'zavastore')].name" \
+            --output tsv | head -1)
+
+          if [ -n "$WEBAPP_NAME" ]; then
+            RG=$(az webapp list \
+              --query "[?name=='$WEBAPP_NAME'].resourceGroup" \
+              --output tsv)
+            az webapp config container set \
+              --name "$WEBAPP_NAME" \
+              --resource-group "$RG" \
+              --docker-custom-image-name "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "Updated $WEBAPP_NAME to image tag $IMAGE_TAG"
+          fi
