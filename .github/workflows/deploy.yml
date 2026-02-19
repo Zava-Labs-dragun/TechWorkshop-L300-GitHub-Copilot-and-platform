@@ -1,0 +1,41 @@
+name: Deploy to Azure App Service
+
+on:
+  push:
+    branches: [main, dev]
+    paths: ['src/**']
+  pull_request:
+    branches: ['*']
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ACR_NAME: ${{ vars.AZURE_CONTAINER_REGISTRY_NAME }}
+  WEBAPP_NAME: ${{ vars.AZURE_APP_SERVICE_NAME }}
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  IMAGE: zavastore:${{ github.sha }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push image
+        run: az acr build --registry $ACR_NAME --image $IMAGE --file src/Dockerfile src/
+
+      - name: Deploy to App Service
+        run: |
+          az webapp config container set \
+            --name $WEBAPP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --docker-custom-image-name $ACR_NAME.azurecr.io/$IMAGE
